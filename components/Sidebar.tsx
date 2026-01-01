@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { SerialConfig, DataBits, StopBits, Parity } from '../types';
 
@@ -10,11 +9,31 @@ interface SidebarProps {
   setIsAutoLineBreak: (val: boolean) => void;
   isAutoScroll: boolean;
   setIsAutoScroll: (val: boolean) => void;
+  maxBufferSize: number;
+  setMaxBufferSize: (val: number) => void;
+  currentBufferSize: number;
   onConnect: () => void;
   onDisconnect: () => void;
 }
 
 const baudRates = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
+const bufferSizes = [
+  { value: 50 * 1024, label: '50 KB' },
+  { value: 100 * 1024, label: '100 KB' },
+  { value: 200 * 1024, label: '200 KB' },
+  { value: 500 * 1024, label: '500 KB' },
+  { value: 1024 * 1024, label: '1 MB' },
+  { value: 2 * 1024 * 1024, label: '2 MB' },
+  { value: 5 * 1024 * 1024, label: '5 MB' },
+  { value: 10 * 1024 * 1024, label: '10 MB' }
+];
+
+// 格式化缓冲区大小显示
+const formatBufferSize = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
 
 const Sidebar: React.FC<SidebarProps> = ({ 
   config, 
@@ -24,6 +43,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   setIsAutoLineBreak,
   isAutoScroll,
   setIsAutoScroll,
+  maxBufferSize,
+  setMaxBufferSize,
+  currentBufferSize,
   onConnect, 
   onDisconnect 
 }) => {
@@ -34,6 +56,13 @@ const Sidebar: React.FC<SidebarProps> = ({
       [name]: name === 'baudRate' || name === 'dataBits' || name === 'stopBits' ? Number(value) : value
     }));
   };
+
+  const handleBufferSizeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setMaxBufferSize(Number(e.target.value));
+  };
+
+  const bufferUsagePercent = (currentBufferSize / maxBufferSize) * 100;
+  const isBufferNearLimit = bufferUsagePercent > 80;
 
   return (
     <aside className="w-72 bg-white border-r flex flex-col h-full shadow-sm z-20">
@@ -77,6 +106,32 @@ const Sidebar: React.FC<SidebarProps> = ({
             </select>
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-gray-600 mb-1">最大缓冲区大小</label>
+            <select value={maxBufferSize} onChange={handleBufferSizeChange} className="w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+              {bufferSizes.map(size => (
+                <option key={size.value} value={size.value}>{size.label}</option>
+              ))}
+            </select>
+            <div className="mt-2">
+              <div className="flex justify-between text-xs text-gray-500 mb-1">
+                <span>当前使用</span>
+                <span>{formatBufferSize(currentBufferSize)} / {formatBufferSize(maxBufferSize)}</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div 
+                  className={`h-2 rounded-full transition-colors ${
+                    isBufferNearLimit ? 'bg-red-500' : bufferUsagePercent > 60 ? 'bg-yellow-500' : 'bg-green-500'
+                  }`}
+                  style={{ width: `${Math.min(bufferUsagePercent, 100)}%` }}
+                ></div>
+              </div>
+              <div className="text-xs text-gray-500 mt-1 text-right">
+                {bufferUsagePercent.toFixed(1)}% 使用中
+              </div>
+            </div>
+          </div>
+
           <div className="pt-4 border-t">
             <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">终端设置</label>
             <div className="space-y-3 p-3 bg-gray-50 rounded-md border border-gray-200">
@@ -113,6 +168,13 @@ const Sidebar: React.FC<SidebarProps> = ({
           <button onClick={onDisconnect} className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors flex items-center justify-center">
             <i className="fas fa-power-off mr-2"></i>关闭串口
           </button>
+        )}
+        
+        {isBufferNearLimit && (
+          <div className="text-xs text-red-600 bg-red-50 p-2 rounded border border-red-200">
+            <i className="fas fa-exclamation-triangle mr-1"></i>
+            缓冲区接近上限，旧数据将被自动删除
+          </div>
         )}
       </div>
     </aside>

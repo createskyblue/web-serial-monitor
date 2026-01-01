@@ -42,6 +42,7 @@ const App: React.FC = () => {
   const [isAutoLineBreak, setIsAutoLineBreak] = useState(false); 
   const [isAutoScroll, setIsAutoScroll] = useState(true); 
   const [isPaused, setIsPaused] = useState(false); // 新增暂停状态
+  const [maxBufferSize, setMaxBufferSize] = useState(100 * 1024); // 最大缓冲区大小，默认100KB
   const [config, setConfig] = useState<SerialConfig>({
     baudRate: 115200,
     dataBits: DataBits.Eight,
@@ -77,6 +78,19 @@ const App: React.FC = () => {
     isPausedRef.current = isPaused;
   }, [isPaused]);
 
+  // 保存最大缓冲区设置到localStorage
+  useEffect(() => {
+    localStorage.setItem('max_buffer_size', maxBufferSize.toString());
+  }, [maxBufferSize]);
+
+  // 从localStorage恢复设置
+  useEffect(() => {
+    const saved = localStorage.getItem('max_buffer_size');
+    if (saved) {
+      setMaxBufferSize(parseInt(saved, 10));
+    }
+  }, []);
+
   useEffect(() => {
     localStorage.setItem('quick_send_list', JSON.stringify(quickSendItems));
   }, [quickSendItems]);
@@ -103,31 +117,20 @@ const App: React.FC = () => {
     return () => clearInterval(frequencyTimer);
   }, []);
 
+  // 计算当前缓冲区使用量 - 简化计算
+  const calculateBufferSize = useCallback((logs: LogEntry[]) => {
+    return logs.reduce((total, log) => {
+      return total + log.data.length + log.text.length; // 简化计算
+    }, 0);
+  }, []);
+
   const addLog = useCallback((type: LogEntry['type'], data: Uint8Array, newText: string) => {
+    console.log('addLog called:', type, newText.substring(0, 50)); // 调试日志
+    
     setLogs(prev => {
-      if (!isAutoLineBreak && type === 'rx' && prev.length > 0) {
-        const lastLog = prev[prev.length - 1];
-        if (lastLog.type === 'rx') {
-          const updatedLogs = [...prev];
-          const combinedData = new Uint8Array(lastLog.data.length + data.length);
-          combinedData.set(lastLog.data);
-          combinedData.set(data, lastLog.data.length);
-          updatedLogs[updatedLogs.length - 1] = {
-            ...lastLog,
-            data: combinedData,
-            text: lastLog.text + newText
-          };
-          
-          // 检查新文本中包含多少个\n，更新计数器（对于合并的记录）
-          if (type === 'rx') {
-            const newlineCount = (newText.match(/\n/g) || []).length;
-            newlineCountRef.current += newlineCount;
-          }
-          
-          return updatedLogs;
-        }
-      }
+      let updatedLogs: LogEntry[];
       
+      // 简化逻辑：每次都创建新日志，不进行合并
       // 检查新文本中包含多少个\n，更新计数器
       if (type === 'rx') {
         const newlineCount = (newText.match(/\n/g) || []).length;
@@ -141,10 +144,35 @@ const App: React.FC = () => {
         data,
         text: newText
       };
-      const nextLogs = [...prev, newLog];
-      return nextLogs.length > 3000 ? nextLogs.slice(-3000) : nextLogs;
+      updatedLogs = [...prev, newLog];
+      
+      console.log('Updated logs before buffer check:', updatedLogs.length); // 调试日志
+      
+      // 重新启用缓冲区检查
+      // 简化缓冲区检查 - 只在日志数量过多时清理
+      if (updatedLogs.length > 1000) {
+        // 删除最旧的500条记录
+        const trimmedLogs = updatedLogs.slice(-500);
+        console.log(`日志数量过多，已清理。当前数量: ${trimmedLogs.length}`);
+        return trimmedLogs;
+      }
+      
+      // 检查缓冲区大小限制 - 只在真正超过时才清理
+      const currentSize = calculateBufferSize(updatedLogs);
+      if (currentSize > maxBufferSize) {
+        // 从最旧的记录开始删除，直到缓冲区大小在限制内
+        let tempLogs = [...updatedLogs];
+        while (calculateBufferSize(tempLogs) > maxBufferSize && tempLogs.length > 100) {
+          tempLogs.shift();
+        }
+        console.log(`缓冲区超限，已清理。当前大小: ${calculateBufferSize(tempLogs)}, 限制: ${maxBufferSize}`);
+        return tempLogs;
+      }
+      
+      console.log('Final logs count:', updatedLogs.length); // 调试日志
+      return updatedLogs;
     });
-  }, [isAutoLineBreak]);
+  }, [calculateBufferSize, maxBufferSize]);
 
   const disconnect = async () => {
     keepReadingRef.current = false;
@@ -197,6 +225,7 @@ const App: React.FC = () => {
           // 使用ref检查暂停状态，确保获取最新值
           if (value && !isPausedRef.current) { 
             const textChunk = decoderRef.current.decode(value, { stream: true });
+            console.log('收到数据:', textChunk); // 调试日志
             addLog('rx', value, textChunk);
           }
         }
@@ -323,12 +352,23 @@ const App: React.FC = () => {
     }
   };
 
+  // 格式化缓冲区大小显示
+  const formatBufferSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const currentBufferSize = calculateBufferSize(logs);
+
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden text-gray-800">
       <Sidebar 
         config={config} setConfig={setConfig} isConnected={isConnected} 
         isAutoLineBreak={isAutoLineBreak} setIsAutoLineBreak={setIsAutoLineBreak}
         isAutoScroll={isAutoScroll} setIsAutoScroll={setIsAutoScroll}
+        maxBufferSize={maxBufferSize} setMaxBufferSize={setMaxBufferSize}
+        currentBufferSize={currentBufferSize}
         onConnect={connect} onDisconnect={disconnect} 
       />
 
@@ -347,6 +387,9 @@ const App: React.FC = () => {
                 {isPaused ? '已暂停' : '运行中'}
               </div>
             )}
+            <div className={`px-2 py-0.5 rounded text-[10px] font-bold ${currentBufferSize > maxBufferSize * 0.8 ? 'bg-red-500 text-white' : 'bg-gray-500 text-white'}`}>
+              缓冲区: {formatBufferSize(currentBufferSize)}/{formatBufferSize(maxBufferSize)}
+            </div>
           </div>
           
           <div className="flex items-center space-x-3">
