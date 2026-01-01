@@ -68,6 +68,7 @@ const App: React.FC = () => {
   const terminalEndRef = useRef<HTMLDivElement>(null);
   const decoderRef = useRef(new TextDecoder("utf-8", { fatal: false }));
   const isPausedRef = useRef(false); // 使用ref来跟踪暂停状态，确保在异步函数中能获取最新值
+  const maxBufferSizeRef = useRef(maxBufferSize); // 使用ref来跟踪maxBufferSize的最新值
   
   // 用于统计每秒\n的计数器
   const newlineCountRef = useRef(0);
@@ -77,6 +78,11 @@ const App: React.FC = () => {
   useEffect(() => {
     isPausedRef.current = isPaused;
   }, [isPaused]);
+
+  // 同步maxBufferSize状态到ref
+  useEffect(() => {
+    maxBufferSizeRef.current = maxBufferSize;
+  }, [maxBufferSize]);
 
   // 保存最大缓冲区设置到localStorage
   useEffect(() => {
@@ -117,10 +123,11 @@ const App: React.FC = () => {
     return () => clearInterval(frequencyTimer);
   }, []);
 
-  // 计算当前缓冲区使用量 - 简化计算
+  // 计算当前缓冲区使用量 - 修复重复计算问题
   const calculateBufferSize = useCallback((logs: LogEntry[]) => {
     return logs.reduce((total, log) => {
-      return total + log.data.length + log.text.length; // 简化计算
+      // 只计算原始数据大小，不重复计算文本
+      return total + log.data.length;
     }, 0);
   }, []);
 
@@ -157,22 +164,25 @@ const App: React.FC = () => {
         return trimmedLogs;
       }
       
-      // 检查缓冲区大小限制 - 只在真正超过时才清理
+      // 检查缓冲区大小限制 - 使用ref获取最新的maxBufferSize
       const currentSize = calculateBufferSize(updatedLogs);
-      if (currentSize > maxBufferSize) {
+      const currentMaxBufferSize = maxBufferSizeRef.current; // 从ref获取最新值
+      console.log(`检查缓冲区: 当前大小=${currentSize}, 限制=${currentMaxBufferSize}`); // 调试日志
+      
+      if (currentSize > currentMaxBufferSize) {
         // 从最旧的记录开始删除，直到缓冲区大小在限制内
         let tempLogs = [...updatedLogs];
-        while (calculateBufferSize(tempLogs) > maxBufferSize && tempLogs.length > 100) {
+        while (calculateBufferSize(tempLogs) > currentMaxBufferSize && tempLogs.length > 10) {
           tempLogs.shift();
         }
-        console.log(`缓冲区超限，已清理。当前大小: ${calculateBufferSize(tempLogs)}, 限制: ${maxBufferSize}`);
+        console.log(`缓冲区超限，已清理。当前大小: ${calculateBufferSize(tempLogs)}, 限制: ${currentMaxBufferSize}`);
         return tempLogs;
       }
       
       console.log('Final logs count:', updatedLogs.length); // 调试日志
       return updatedLogs;
     });
-  }, [calculateBufferSize, maxBufferSize]);
+  }, [calculateBufferSize]); // 只依赖calculateBufferSize
 
   const disconnect = async () => {
     keepReadingRef.current = false;
