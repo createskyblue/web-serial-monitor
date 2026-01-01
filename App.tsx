@@ -272,8 +272,8 @@ const App: React.FC = () => {
     let blob: Blob;
     let filename = `serial_log_${new Date().getTime()}`;
 
-    // 完全按照终端显示的内容导出，不添加时间戳
-    const content = logs.map(l => l.text).join('');
+    // 只导出RX和TX数据，不包含系统日志信息
+    const content = logs.filter(l => l.type === 'rx' || l.type === 'tx').map(l => l.text).join('');
     blob = new Blob([content], { type: 'text/plain' });
     filename += format === 'txt' ? '.txt' : '.bin';
 
@@ -289,8 +289,8 @@ const App: React.FC = () => {
   const copyLogs = () => {
     if (logs.length === 0) return;
     
-    // 完全按照终端显示的内容复制
-    const content = logs.map(l => l.text).join('');
+    // 只复制RX和TX数据，不包含系统日志信息
+    const content = logs.filter(l => l.type === 'rx' || l.type === 'tx').map(l => l.text).join('');
     
     navigator.clipboard.writeText(content).then(() => {
       console.log('日志已复制到剪贴板');
