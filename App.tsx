@@ -430,6 +430,8 @@ const App: React.FC = () => {
         const data = new Uint8Array(arrayBuffer);
         const total = data.length;
         
+        // 添加文件发送的TX日志，用于计数
+        addLog('tx', data, `文件: ${file.name} (${total} 字节)`);
         addLog('info', new Uint8Array(), `开始发送文件: ${file.name} (${total} 字节)`);
         
         let sent = 0;
@@ -464,6 +466,9 @@ const App: React.FC = () => {
       const arrayBuffer = await file.arrayBuffer();
       const data = new Uint8Array(arrayBuffer);
       const total = data.length;
+      
+      // 添加文件发送的TX日志，用于计数
+      addLog('tx', data, `文件: ${file.name} (${total} 字节)`);
       
       try {
         addLog('info', new Uint8Array(), `开始发送文件: ${file.name} (${total} 字节)`);
