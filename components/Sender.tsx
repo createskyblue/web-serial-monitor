@@ -9,11 +9,19 @@ interface SenderProps {
 }
 
 const Sender: React.FC<SenderProps> = ({ onSend, onFileSend, isConnected }) => {
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(() => {
+    const saved = localStorage.getItem('serial-input');
+    return saved !== null ? saved : '';
+  });
   const [mode, setMode] = useState<DisplayMode>(DisplayMode.Text);
   const [isTimerEnabled, setIsTimerEnabled] = useState(false);
   const [timerInterval, setTimerInterval] = useState(1000);
   const [addNewline, setAddNewline] = useState(false);
+
+  // 持久化输入内容到 localStorage
+  useEffect(() => {
+    localStorage.setItem('serial-input', input);
+  }, [input]);
   
   // 文件发送相关
   const [fileSendMode, setFileSendMode] = useState<FileSendMode>(FileSendMode.Raw);
