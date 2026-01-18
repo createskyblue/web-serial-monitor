@@ -697,9 +697,8 @@ const App: React.FC = () => {
         <div 
           className="h-1 bg-gray-200 hover:bg-blue-400 cursor-row-resize transition-colors flex items-center justify-center"
           onMouseDown={handleMouseDown}
-        >
-          <div className="w-32 h-full bg-gray-300 hover:bg-blue-500 rounded transition-colors"></div>
-        </div>
+        ></div>
+        
 
         <div className="bg-white border-t shadow-sm m-2 mb-2" style={{ height: `${100 - splitPosition}%`, minHeight: '80px' }}>
           <Sender onSend={sendData} onFileSend={handleFileSend} isConnected={isConnected && !isPaused} />
