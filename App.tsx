@@ -66,6 +66,8 @@ const App: React.FC = () => {
 
   // 添加频率统计相关状态
   const [lineFrequency, setLineFrequency] = useState(0);
+  const [splitPosition, setSplitPosition] = useState(60); // 分割条位置（百分比）
+  const [isDragging, setIsDragging] = useState(false);
 
   const [quickSendItems, setQuickSendItems] = useState<QuickSendItem[]>(() => {
     const saved = localStorage.getItem('quick_send_list');
@@ -559,6 +561,47 @@ const App: React.FC = () => {
 
   const currentBufferSize = calculateBufferSize(logs);
 
+  // 处理分割条拖拽
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const mainElement = document.querySelector('main');
+      if (!mainElement) return;
+      
+      const rect = mainElement.getBoundingClientRect();
+      const headerHeight = rect.top + 56; // header height approximately
+      const footerHeight = 80; // sender minimum height
+      const totalHeight = window.innerHeight - headerHeight - footerHeight;
+      
+      // 计算新的分割位置（限制在10%-90%之间）
+      const relativeY = e.clientY - headerHeight;
+      const newPercent = Math.max(10, Math.min(90, (relativeY / (window.innerHeight - headerHeight - footerHeight)) * 100));
+      setSplitPosition(newPercent);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
+
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden text-gray-800">
       <Sidebar 
@@ -636,21 +679,31 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        <div className="flex-1 overflow-hidden p-4 flex flex-col">
-          <Terminal 
-            logs={logs} 
-            displayMode={displayMode} 
-            isAutoLineBreak={isAutoLineBreak}
-            terminalEndRef={terminalEndRef}
-            aiAnalysis={null}
-            onCloseAi={() => {}}
-            lineFrequency={lineFrequency}  // 传递频率数据
-          />
+        <div className="flex-1 overflow-hidden flex flex-col" style={{ height: `${splitPosition}%` }}>
+          <div className="flex-1 overflow-hidden p-2 flex flex-col">
+            <Terminal 
+              logs={logs} 
+              displayMode={displayMode} 
+              isAutoLineBreak={isAutoLineBreak}
+              terminalEndRef={terminalEndRef}
+              aiAnalysis={null}
+              onCloseAi={() => {}}
+              lineFrequency={lineFrequency}
+            />
+          </div>
         </div>
 
-        <footer className="bg-white border-t p-4 shadow-sm">
+        {/* 分割条 */}
+        <div 
+          className="h-1 bg-gray-200 hover:bg-blue-400 cursor-row-resize transition-colors flex items-center justify-center"
+          onMouseDown={handleMouseDown}
+        >
+          <div className="w-32 h-full bg-gray-300 hover:bg-blue-500 rounded transition-colors"></div>
+        </div>
+
+        <div className="bg-white border-t shadow-sm m-2 mb-2" style={{ height: `${100 - splitPosition}%`, minHeight: '80px' }}>
           <Sender onSend={sendData} onFileSend={handleFileSend} isConnected={isConnected && !isPaused} />
-        </footer>
+        </div>
       </main>
 
       <QuickSendList items={quickSendItems} onUpdate={setQuickSendItems} onSend={sendData} isConnected={isConnected && !isPaused} />

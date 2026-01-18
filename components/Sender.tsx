@@ -81,11 +81,11 @@ const Sender: React.FC<SenderProps> = ({ onSend, onFileSend, isConnected }) => {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex gap-4 min-h-[140px]">
+    <div className="h-full flex flex-col min-h-0">
+      <div className="flex gap-4 flex-1 min-h-0">
         {/* 左侧：普通发送区 */}
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-2 shrink-0">
             <div className="flex space-x-2 bg-gray-100 p-0.5 rounded-md">
               <button onClick={() => setMode(DisplayMode.Text)} className={`text-[10px] px-2 py-1 rounded transition-colors ${mode === DisplayMode.Text ? 'bg-white shadow-sm text-blue-600 font-bold' : 'text-gray-500'}`}>文本模式</button>
               <button onClick={() => setMode(DisplayMode.Hex)} className={`text-[10px] px-2 py-1 rounded transition-colors ${mode === DisplayMode.Hex ? 'bg-white shadow-sm text-blue-600 font-bold' : 'text-gray-500'}`}>Hex 模式</button>
@@ -117,7 +117,7 @@ const Sender: React.FC<SenderProps> = ({ onSend, onFileSend, isConnected }) => {
             />
             <button 
               onClick={handleSendClick} disabled={!isConnected || !input.trim()}
-              className="w-20 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg disabled:opacity-30 shadow-sm transition-all flex flex-col items-center justify-center"
+              className="w-20 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg disabled:opacity-30 shadow-sm transition-all flex flex-col items-center justify-center shrink-0"
             >
               <i className="fas fa-paper-plane text-sm mb-1"></i>
               <span className="text-[11px]">发送</span>
@@ -126,7 +126,7 @@ const Sender: React.FC<SenderProps> = ({ onSend, onFileSend, isConnected }) => {
         </div>
 
         {/* 右侧：文件发送区 */}
-        <div className="w-72 p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-3">
+        <div className="w-72 p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-3 shrink-0">
           <div className="flex items-center justify-between">
             <h3 className="text-[11px] font-bold text-gray-600">文件传输</h3>
             <div className="flex bg-gray-200 p-0.5 rounded text-[9px]">
