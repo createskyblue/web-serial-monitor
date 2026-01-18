@@ -16,6 +16,11 @@
 - **WebSocket通信**：支持WebSocket连接，实现网络串口功能
   - 自动重连：连接断开后自动尝试重连（可手动放弃）
   - 智能发送：Text模式发送文本字符串，Hex模式发送字节数据
+- **蓝牙通信**：基于Web Bluetooth API，支持蓝牙低功耗设备
+  - 支持 UUID16 格式（如 `0xfff0`）和完整 UUID 格式（如 `6e400001-b5a3-f393-e0a9-e50e24dcca9e`）
+  - TX/RX 双特征支持：分别配置发送和接收特征 UUID
+  - 自动格式转换：UUID16 自动转换为完整 UUID 格式
+  - 设备扫描：显示所有可用蓝牙设备
 
 ### 数据显示与操作
 - **实时数据收发**：清晰展示串口收发数据
@@ -64,6 +69,7 @@
 ### 用户体验优化
 - **设置持久化**：
   - WebSocket服务器地址自动保存
+  - 蓝牙服务UUID、TX/RX特征UUID自动保存
   - 发送区域内容自动保存
   - 快捷发送列表自动保存
   - 缓冲区大小设置自动保存
@@ -98,7 +104,28 @@
 
 ## 注意事项
 
-- 由于使用了Web Serial API，串口功能仅在支持此API的浏览器中工作（主要是Chrome/Edge 89+）
+### 通用
+- 建议使用 Chrome 或 Edge 浏览器以获得最佳兼容性
+- 建议在 HTTPS 环境或 localhost 下使用（某些 API 的安全要求）
+
+### 串口模式
+- 串口功能需要浏览器支持 Web Serial API（Chrome/Edge 89+）
 - 首次使用串口功能需要授权浏览器访问串口设备
+
+### WebSocket 模式
 - WebSocket功能在所有现代浏览器中都可用
 - 为保证稳定性，建议在本地网络环境下使用
+
+### 蓝牙模式
+- 蓝牙功能需要浏览器支持 Web Bluetooth API（Chrome/Edge）
+- 必须在 HTTPS 环境或 localhost 下使用（Web Bluetooth API 安全限制）
+- 需要配置正确的服务 UUID 和特征 UUID
+  - 支持 UUID16 格式（如 `0xfff0` 或 `fff0`）
+  - 支持完整 UUID 格式（如 `6e400001-b5a3-f393-e0a9-e50e24dcca9e`）
+- TX 特征需要具有 Write 属性（用于发送数据）
+- RX 特征需要具有 Notify 属性（用于接收数据）
+- 如果连接失败，请检查：
+  1. 设备是否支持配置的服务 UUID
+  2. TX/RX 特征 UUID 是否正确
+  3. 浏览器是否支持 Web Bluetooth API
+  4. 是否在 HTTPS 或 localhost 环境下访问

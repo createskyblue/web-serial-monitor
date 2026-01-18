@@ -18,8 +18,10 @@ interface SidebarProps {
   setWsUrl: (val: string) => void;
   bluetoothServiceUUID: string;
   setBluetoothServiceUUID: (val: string) => void;
-  bluetoothCharacteristicUUID: string;
-  setBluetoothCharacteristicUUID: (val: string) => void;
+  bluetoothTxCharacteristicUUID: string;
+  setBluetoothTxCharacteristicUUID: (val: string) => void;
+  bluetoothRxCharacteristicUUID: string;
+  setBluetoothRxCharacteristicUUID: (val: string) => void;
   onConnect: () => void;
   onDisconnect: () => void;
   isReconnecting?: boolean;
@@ -61,8 +63,10 @@ const Sidebar: React.FC<SidebarProps> = ({
   setWsUrl,
   bluetoothServiceUUID,
   setBluetoothServiceUUID,
-  bluetoothCharacteristicUUID,
-  setBluetoothCharacteristicUUID,
+  bluetoothTxCharacteristicUUID,
+  setBluetoothTxCharacteristicUUID,
+  bluetoothRxCharacteristicUUID,
+  setBluetoothRxCharacteristicUUID,
   onConnect,
   onDisconnect,
   isReconnecting = false
@@ -73,8 +77,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   }, [bluetoothServiceUUID]);
 
   useEffect(() => {
-    localStorage.setItem('bluetooth_characteristic_uuid', bluetoothCharacteristicUUID);
-  }, [bluetoothCharacteristicUUID]);
+    localStorage.setItem('bluetooth_tx_characteristic_uuid', bluetoothTxCharacteristicUUID);
+  }, [bluetoothTxCharacteristicUUID]);
+
+  useEffect(() => {
+    localStorage.setItem('bluetooth_rx_characteristic_uuid', bluetoothRxCharacteristicUUID);
+  }, [bluetoothRxCharacteristicUUID]);
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const { name, value } = e.target;
     setConfig(prev => ({
@@ -135,22 +143,34 @@ const Sidebar: React.FC<SidebarProps> = ({
                   value={bluetoothServiceUUID}
                   onChange={(e) => setBluetoothServiceUUID(e.target.value)}
                   disabled={isConnected}
-                  placeholder="例如: 0000ffe0-0000-1000-8000-00805f9b34fb"
+                  placeholder="例如: 0xfff0 或 6e400001-b5a3-f393-e0a9-e50e24dcca9e"
                   className="w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 outline-none font-mono text-xs"
                 />
-                <p className="text-xs text-gray-500 mt-1">蓝牙设备的服务 UUID</p>
+                <p className="text-xs text-gray-500 mt-1">支持 UUID16 (如 0xfff0) 或完整 UUID</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">特征 UUID (Characteristic UUID)</label>
+                <label className="block text-sm font-medium text-gray-600 mb-1">TX 特征 UUID (发送)</label>
                 <input
                   type="text"
-                  value={bluetoothCharacteristicUUID}
-                  onChange={(e) => setBluetoothCharacteristicUUID(e.target.value)}
+                  value={bluetoothTxCharacteristicUUID}
+                  onChange={(e) => setBluetoothTxCharacteristicUUID(e.target.value)}
                   disabled={isConnected}
-                  placeholder="例如: 0000ffe1-0000-1000-8000-00805f9b34fb"
+                  placeholder="例如: 0xfff1 或 6e400002-b5a3-f393-e0a9-e50e24dcca9e"
                   className="w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 outline-none font-mono text-xs"
                 />
-                <p className="text-xs text-gray-500 mt-1">用于数据读写的特征 UUID</p>
+                <p className="text-xs text-gray-500 mt-1">用于发送数据的特征 UUID（Write属性）</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-1">RX 特征 UUID (接收)</label>
+                <input
+                  type="text"
+                  value={bluetoothRxCharacteristicUUID}
+                  onChange={(e) => setBluetoothRxCharacteristicUUID(e.target.value)}
+                  disabled={isConnected}
+                  placeholder="例如: 0xfff2 或 6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+                  className="w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 outline-none font-mono text-xs"
+                />
+                <p className="text-xs text-gray-500 mt-1">用于接收数据的特征 UUID（Notify属性）</p>
               </div>
             </div>
           ) : (

@@ -42,7 +42,8 @@ export enum CommMode {
 
 export interface BluetoothConfig {
   serviceUUID: string;
-  characteristicUUID: string;
+  txCharacteristicUUID: string;  // 发送特征 UUID
+  rxCharacteristicUUID: string;  // 接收特征 UUID
 }
 
 export interface LogEntry {

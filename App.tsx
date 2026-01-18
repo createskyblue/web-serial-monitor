@@ -86,12 +86,17 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('bluetooth_service_uuid');
     return saved !== null ? saved : '';
   });
-  const [bluetoothCharacteristicUUID, setBluetoothCharacteristicUUID] = useState(() => {
-    const saved = localStorage.getItem('bluetooth_characteristic_uuid');
+  const [bluetoothTxCharacteristicUUID, setBluetoothTxCharacteristicUUID] = useState(() => {
+    const saved = localStorage.getItem('bluetooth_tx_characteristic_uuid');
+    return saved !== null ? saved : '';
+  });
+  const [bluetoothRxCharacteristicUUID, setBluetoothRxCharacteristicUUID] = useState(() => {
+    const saved = localStorage.getItem('bluetooth_rx_characteristic_uuid');
     return saved !== null ? saved : '';
   });
   const bluetoothDeviceRef = useRef<BluetoothDevice | null>(null);
-  const bluetoothCharacteristicRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
+  const bluetoothTxCharacteristicRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
+  const bluetoothRxCharacteristicRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
 
   const [config, setConfig] = useState<SerialConfig>({
     baudRate: 115200,
@@ -253,7 +258,8 @@ const App: React.FC = () => {
         } catch (e) {}
       }
       bluetoothDeviceRef.current = null;
-      bluetoothCharacteristicRef.current = null;
+      bluetoothTxCharacteristicRef.current = null;
+      bluetoothRxCharacteristicRef.current = null;
       setIsConnected(false);
       setIsPaused(false);
       addLog('info', new Uint8Array(), '蓝牙已断开');
@@ -297,16 +303,33 @@ const App: React.FC = () => {
         return;
       }
 
-      if (!bluetoothServiceUUID || !bluetoothCharacteristicUUID) {
-        alert('请先配置蓝牙服务 UUID 和特征 UUID');
+      if (!bluetoothServiceUUID || !bluetoothTxCharacteristicUUID || !bluetoothRxCharacteristicUUID) {
+        alert('请先配置蓝牙服务 UUID、TX 特征 UUID 和 RX 特征 UUID');
         return;
       }
 
       try {
-        // 请求蓝牙设备
+        // 处理UUID16格式（例如：0xfff0 或 fff0）
+        const formatUUID = (uuid: string): string => {
+          // 如果是UUID16格式（4位或5位十六进制，可能带0x前缀）
+          const match = uuid.match(/^(?:0x)?([0-9a-fA-F]{4})$/);
+          if (match) {
+            // 转换为完整UUID格式：0000xxxx-0000-1000-8000-00805f9b34fb
+            const hex = match[1].padStart(4, '0').toLowerCase();
+            return `0000${hex}-0000-1000-8000-00805f9b34fb`;
+          }
+          // 如果是完整UUID格式，直接返回（统一为小写）
+          return uuid.toLowerCase();
+        };
+
+        const serviceUUID = formatUUID(bluetoothServiceUUID);
+        const txUUID = formatUUID(bluetoothTxCharacteristicUUID);
+        const rxUUID = formatUUID(bluetoothRxCharacteristicUUID);
+
+        // 请求蓝牙设备（接受所有设备，在连接时验证服务UUID）
         const device = await (navigator as any).bluetooth.requestDevice({
-          filters: [{ services: [bluetoothServiceUUID] }],
-          optionalServices: [bluetoothServiceUUID]
+          acceptAllDevices: true,
+          optionalServices: [serviceUUID]
         });
 
         addLog('info', new Uint8Array(), `正在连接蓝牙设备: ${device.name || '未知设备'}`);
@@ -316,23 +339,28 @@ const App: React.FC = () => {
         addLog('info', new Uint8Array(), 'GATT 服务器已连接');
 
         // 获取服务
-        const service = await server.getPrimaryService(bluetoothServiceUUID);
+        const service = await server.getPrimaryService(serviceUUID);
         addLog('info', new Uint8Array(), '已获取服务');
 
-        // 获取特征
-        const characteristic = await service.getCharacteristic(bluetoothCharacteristicUUID);
-        addLog('info', new Uint8Array(), '已获取特征');
+        // 获取 TX 特征（发送）
+        const txCharacteristic = await service.getCharacteristic(txUUID);
+        addLog('info', new Uint8Array(), '已获取 TX 特征');
+
+        // 获取 RX 特征（接收）
+        const rxCharacteristic = await service.getCharacteristic(rxUUID);
+        addLog('info', new Uint8Array(), '已获取 RX 特征');
 
         // 保存设备引用
         bluetoothDeviceRef.current = device;
-        bluetoothCharacteristicRef.current = characteristic;
+        bluetoothTxCharacteristicRef.current = txCharacteristic;
+        bluetoothRxCharacteristicRef.current = rxCharacteristic;
 
-        // 订阅通知
-        await characteristic.startNotifications();
-        addLog('info', new Uint8Array(), '已启用通知');
+        // 订阅 RX 特征的通知
+        await rxCharacteristic.startNotifications();
+        addLog('info', new Uint8Array(), '已启用 RX 通知');
 
-        // 监听特征值变化
-        characteristic.addEventListener('characteristicvaluechanged', (event: any) => {
+        // 监听 RX 特征值变化
+        rxCharacteristic.addEventListener('characteristicvaluechanged', (event: any) => {
           if (isPausedRef.current) return;
           const value = event.target.value;
           const data = new Uint8Array(value.buffer);
@@ -349,7 +377,8 @@ const App: React.FC = () => {
             setIsConnected(false);
             setIsPaused(false);
             bluetoothDeviceRef.current = null;
-            bluetoothCharacteristicRef.current = null;
+            bluetoothTxCharacteristicRef.current = null;
+            bluetoothRxCharacteristicRef.current = null;
             addLog('info', new Uint8Array(), '蓝牙设备已断开');
           }
         });
@@ -552,7 +581,7 @@ const App: React.FC = () => {
 
     if (commMode === CommMode.Bluetooth) {
       // 蓝牙模式发送文件
-      if (!bluetoothCharacteristicRef.current) {
+      if (!bluetoothTxCharacteristicRef.current) {
         addLog('error', new Uint8Array(), '文件发送失败: 蓝牙未连接');
         return;
       }
@@ -576,7 +605,7 @@ const App: React.FC = () => {
           // 蓝牙MTU限制，通常最大512字节，使用安全值20字节
           const chunkSize = Math.min(options.throttleBytes, 20);
           const chunk = data.slice(sent, sent + chunkSize);
-          await bluetoothCharacteristicRef.current.writeValue(chunk);
+          await bluetoothTxCharacteristicRef.current.writeValue(chunk);
           sent += chunk.length;
           options.onProgress(Math.round((sent / total) * 100));
 
@@ -690,9 +719,9 @@ const App: React.FC = () => {
       try {
         if (commMode === CommMode.Bluetooth) {
           // 蓝牙模式发送
-          if (bluetoothCharacteristicRef.current) {
-            // 蓝牙发送字节数据
-            await bluetoothCharacteristicRef.current.writeValue(item.data);
+          if (bluetoothTxCharacteristicRef.current) {
+            // 蓝牙发送字节数据（使用 TX 特征）
+            await bluetoothTxCharacteristicRef.current.writeValue(item.data);
           }
         } else if (commMode === CommMode.WebSocket) {
           // WebSocket 模式发送
@@ -797,7 +826,8 @@ const App: React.FC = () => {
         commMode={commMode} setCommMode={setCommMode}
         wsUrl={wsUrl} setWsUrl={setWsUrl}
         bluetoothServiceUUID={bluetoothServiceUUID} setBluetoothServiceUUID={setBluetoothServiceUUID}
-        bluetoothCharacteristicUUID={bluetoothCharacteristicUUID} setBluetoothCharacteristicUUID={setBluetoothCharacteristicUUID}
+        bluetoothTxCharacteristicUUID={bluetoothTxCharacteristicUUID} setBluetoothTxCharacteristicUUID={setBluetoothTxCharacteristicUUID}
+        bluetoothRxCharacteristicUUID={bluetoothRxCharacteristicUUID} setBluetoothRxCharacteristicUUID={setBluetoothRxCharacteristicUUID}
         onConnect={connect} onDisconnect={disconnect} 
         isReconnecting={isReconnecting}
       />
