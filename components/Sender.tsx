@@ -153,10 +153,10 @@ const Sender: React.FC<SenderProps> = ({ onSend, onFileSend, isConnected, isReco
             />
             <button 
               onClick={handleSendClick} disabled={!isConnected || !input.trim()}
-              className="h-10 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg disabled:opacity-30 shadow-sm transition-all flex flex-col items-center justify-center shrink-0"
+              className="h-10 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg disabled:opacity-30 shadow-sm transition-all flex flex-row items-center justify-center shrink-0"
             >
               <i className="fas fa-paper-plane text-sm mb-1"></i>
-              <span className="text-[11px]">发送</span>
+              <span className="text-[11px] ms-2">发送</span>
             </button>
           </div>
         </div>
