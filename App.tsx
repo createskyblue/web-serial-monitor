@@ -49,6 +49,8 @@ const App: React.FC = () => {
   const [commMode, setCommMode] = useState<CommMode>(CommMode.Serial);
   const [wsUrl, setWsUrl] = useState('ws://localhost:8080');
   const wsRef = useRef<WebSocket | null>(null);
+  const shouldReconnectRef = useRef(true); // 控制是否自动重连
+  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null); // 重连定时器
 
   const [config, setConfig] = useState<SerialConfig>({
     baudRate: 115200,
@@ -76,6 +78,8 @@ const App: React.FC = () => {
   const decoderRef = useRef(new TextDecoder("utf-8", { fatal: false }));
   const isPausedRef = useRef(false); // 使用ref来跟踪暂停状态，确保在异步函数中能获取最新值
   const maxBufferSizeRef = useRef(maxBufferSize); // 使用ref来跟踪maxBufferSize的最新值
+  const sendQueueRef = useRef<{data: Uint8Array, text: string}[]>([]); // 发送队列
+  const isSendingRef = useRef(false); // 是否正在发送
   
   // 用于统计每秒\n的计数器
   const newlineCountRef = useRef(0);
@@ -194,7 +198,12 @@ const App: React.FC = () => {
 
   const disconnect = async () => {
     if (commMode === CommMode.WebSocket) {
-      // WebSocket 断开
+      // WebSocket 断开 - 用户主动关闭
+      shouldReconnectRef.current = false; // 禁止自动重连
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -239,13 +248,23 @@ const App: React.FC = () => {
           if (isPausedRef.current) return;
           let data: Uint8Array;
           let text: string;
+          
+          // 原样显示数据，不管text还是raw，不管是否乱码
           if (event.data instanceof ArrayBuffer) {
             data = new Uint8Array(event.data);
+            // 不管是否乱码，原样解码显示
             text = decoderRef.current.decode(data, { stream: true });
-          } else {
+          } else if (typeof event.data === 'string') {
             text = event.data;
-            data = stringToUint8Array(text);
+            // 文本转为字节数组
+            const encoder = new TextEncoder();
+            data = encoder.encode(text);
+          } else {
+            // Blob或其他类型
+            text = '[二进制数据]';
+            data = new Uint8Array(0);
           }
+          
           addLog('rx', data, text);
         };
 
@@ -257,10 +276,21 @@ const App: React.FC = () => {
           setIsConnected(false);
           setIsPaused(false);
           wsRef.current = null;
-          addLog('info', new Uint8Array(), 'WebSocket 连接已关闭');
+          
+          // 如果需要重连，则启动自动重连
+          if (shouldReconnectRef.current && commMode === CommMode.WebSocket) {
+            addLog('info', new Uint8Array(), 'WebSocket 连接已断开，1秒后尝试重连...');
+            reconnectTimerRef.current = setTimeout(() => {
+              connect();
+            }, 1000);
+          } else {
+            addLog('info', new Uint8Array(), 'WebSocket 连接已关闭');
+          }
         };
 
         wsRef.current = ws;
+        // 重置重连标志，允许自动重连
+        shouldReconnectRef.current = true;
       } catch (err: any) {
         addLog('error', new Uint8Array(), `WebSocket 连接失败: ${err.message}`);
       }
@@ -315,25 +345,21 @@ const App: React.FC = () => {
   };
 
   const sendData = async (input: string, mode: DisplayMode) => {
-    if (!port || !port.writable) return;
-    
     // 如果暂停状态，不允许发送数据
     if (isPaused) {
-      addLog('error', new Uint8Array(), '发送失败: 串口已暂停');
+      addLog('error', new Uint8Array(), '发送失败: 已暂停');
       return;
     }
+
+    const data = mode === DisplayMode.Hex ? hexToUint8Array(input) : stringToUint8Array(input);
+    // 先添加发送日志，确保在回环数据之前显示
+    addLog('tx', data, input);
     
-    try {
-      const data = mode === DisplayMode.Hex ? hexToUint8Array(input) : stringToUint8Array(input);
-      // 先添加发送日志，确保在回环数据之前显示
-      addLog('tx', data, input);
-      // 然后执行发送操作
-      const writer = port.writable.getWriter();
-      await writer.write(data);
-      writer.releaseLock();
-    } catch (err: any) {
-      addLog('error', new Uint8Array(), `发送失败: ${err.message}`);
-    }
+    // 添加到发送队列
+    sendQueueRef.current.push({ data, text: input });
+    
+    // 触发队列处理
+    processSendQueue();
   };
 
   const exportLogs = (format: 'txt' | 'bin') => {
@@ -386,49 +412,124 @@ const App: React.FC = () => {
 
   // 处理文件流发送
   const handleFileSend = async (file: File, options: { mode: FileSendMode, throttleBytes: number, throttleMs: number, onProgress: (p: number) => void }) => {
-    if (!port || !port.writable) return;
-    
     // 如果暂停状态，不允许发送文件
     if (isPaused) {
-      addLog('error', new Uint8Array(), '文件发送失败: 串口已暂停');
+      addLog('error', new Uint8Array(), '文件发送失败: 已暂停');
       return;
     }
-    
-    const writer = port.writable.getWriter();
-    const arrayBuffer = await file.arrayBuffer();
-    const data = new Uint8Array(arrayBuffer);
-    const total = data.length;
-    
-    try {
-      addLog('info', new Uint8Array(), `开始发送文件: ${file.name} (${total} 字节)`);
-      
-      let sent = 0;
-      while (sent < total) {
-        // 检查是否在发送过程中被暂停
-        if (isPaused) {
-          addLog('error', new Uint8Array(), '文件发送中断: 串口已暂停');
-          break;
-        }
-        
-        const chunk = data.slice(sent, sent + options.throttleBytes);
-        await writer.write(chunk);
-        sent += chunk.length;
-        options.onProgress(Math.round((sent / total) * 100));
-        
-        if (options.throttleMs > 0 && sent < total) {
-          await new Promise(resolve => setTimeout(resolve, options.throttleMs));
-        }
+
+    if (commMode === CommMode.WebSocket) {
+      // WebSocket 模式发送文件
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        addLog('error', new Uint8Array(), '文件发送失败: WebSocket 未连接');
+        return;
       }
       
-      if (!isPaused) {
-        addLog('info', new Uint8Array(), `文件发送完毕`);
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const data = new Uint8Array(arrayBuffer);
+        const total = data.length;
+        
+        addLog('info', new Uint8Array(), `开始发送文件: ${file.name} (${total} 字节)`);
+        
+        let sent = 0;
+        while (sent < total) {
+          // 检查是否在发送过程中被暂停
+          if (isPaused) {
+            addLog('error', new Uint8Array(), '文件发送中断: 已暂停');
+            break;
+          }
+          
+          const chunk = data.slice(sent, sent + options.throttleBytes);
+          wsRef.current.send(chunk);
+          sent += chunk.length;
+          options.onProgress(Math.round((sent / total) * 100));
+          
+          if (options.throttleMs > 0 && sent < total) {
+            await new Promise(resolve => setTimeout(resolve, options.throttleMs));
+          }
+        }
+        
+        if (!isPaused) {
+          addLog('info', new Uint8Array(), '文件发送完毕');
+        }
+      } catch (err: any) {
+        addLog('error', new Uint8Array(), `文件发送中断: ${err.message}`);
       }
-    } catch (err: any) {
-      addLog('error', new Uint8Array(), `文件发送中断: ${err.message}`);
-    } finally {
-      writer.releaseLock();
+    } else {
+      // 串口模式发送文件
+      if (!port || !port.writable) return;
+      
+      const writer = port.writable.getWriter();
+      const arrayBuffer = await file.arrayBuffer();
+      const data = new Uint8Array(arrayBuffer);
+      const total = data.length;
+      
+      try {
+        addLog('info', new Uint8Array(), `开始发送文件: ${file.name} (${total} 字节)`);
+        
+        let sent = 0;
+        while (sent < total) {
+          // 检查是否在发送过程中被暂停
+          if (isPaused) {
+            addLog('error', new Uint8Array(), '文件发送中断: 已暂停');
+            break;
+          }
+          
+          const chunk = data.slice(sent, sent + options.throttleBytes);
+          await writer.write(chunk);
+          sent += chunk.length;
+          options.onProgress(Math.round((sent / total) * 100));
+          
+          if (options.throttleMs > 0 && sent < total) {
+            await new Promise(resolve => setTimeout(resolve, options.throttleMs));
+          }
+        }
+        
+        if (!isPaused) {
+          addLog('info', new Uint8Array(), '文件发送完毕');
+        }
+      } catch (err: any) {
+        addLog('error', new Uint8Array(), `文件发送中断: ${err.message}`);
+      } finally {
+        writer.releaseLock();
+      }
     }
   };
+
+  // 发送队列处理函数
+  const processSendQueue = useCallback(async () => {
+    if (isSendingRef.current || sendQueueRef.current.length === 0) {
+      return;
+    }
+
+    isSendingRef.current = true;
+
+    while (sendQueueRef.current.length > 0) {
+      const item = sendQueueRef.current.shift();
+      if (!item) break;
+
+      try {
+        if (commMode === CommMode.WebSocket) {
+          // WebSocket 模式发送
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(item.data);
+          }
+        } else {
+          // 串口模式发送
+          if (port && port.writable) {
+            const writer = port.writable.getWriter();
+            await writer.write(item.data);
+            writer.releaseLock();
+          }
+        }
+      } catch (err: any) {
+        addLog('error', new Uint8Array(), `发送失败: ${err.message}`);
+      }
+    }
+
+    isSendingRef.current = false;
+  }, [commMode, port]);
 
   // 切换暂停状态
   const togglePause = () => {
@@ -461,6 +562,8 @@ const App: React.FC = () => {
         isAutoScroll={isAutoScroll} setIsAutoScroll={setIsAutoScroll}
         maxBufferSize={maxBufferSize} setMaxBufferSize={setMaxBufferSize}
         currentBufferSize={currentBufferSize}
+        commMode={commMode} setCommMode={setCommMode}
+        wsUrl={wsUrl} setWsUrl={setWsUrl}
         onConnect={connect} onDisconnect={disconnect} 
       />
 
