@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { SerialConfig, DataBits, StopBits, Parity, CommMode } from '../types';
 
 interface SidebarProps {
@@ -16,6 +16,10 @@ interface SidebarProps {
   setCommMode: (val: CommMode) => void;
   wsUrl: string;
   setWsUrl: (val: string) => void;
+  bluetoothServiceUUID: string;
+  setBluetoothServiceUUID: (val: string) => void;
+  bluetoothCharacteristicUUID: string;
+  setBluetoothCharacteristicUUID: (val: string) => void;
   onConnect: () => void;
   onDisconnect: () => void;
   isReconnecting?: boolean;
@@ -55,10 +59,22 @@ const Sidebar: React.FC<SidebarProps> = ({
   setCommMode,
   wsUrl,
   setWsUrl,
+  bluetoothServiceUUID,
+  setBluetoothServiceUUID,
+  bluetoothCharacteristicUUID,
+  setBluetoothCharacteristicUUID,
   onConnect,
   onDisconnect,
   isReconnecting = false
 }) => {
+  // 持久化蓝牙配置
+  useEffect(() => {
+    localStorage.setItem('bluetooth_service_uuid', bluetoothServiceUUID);
+  }, [bluetoothServiceUUID]);
+
+  useEffect(() => {
+    localStorage.setItem('bluetooth_characteristic_uuid', bluetoothCharacteristicUUID);
+  }, [bluetoothCharacteristicUUID]);
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const { name, value } = e.target;
     setConfig(prev => ({
@@ -93,6 +109,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             >
               <option value={CommMode.Serial}>串口 (Serial)</option>
               <option value={CommMode.WebSocket}>WebSocket</option>
+              <option value={CommMode.Bluetooth}>蓝牙 (Bluetooth)</option>
             </select>
           </div>
 
@@ -108,6 +125,33 @@ const Sidebar: React.FC<SidebarProps> = ({
                 className="w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 outline-none"
               />
               <p className="text-xs text-gray-500 mt-1">支持 ws:// 或 wss:// 协议</p>
+            </div>
+          ) : commMode === CommMode.Bluetooth ? (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-1">服务 UUID (Service UUID)</label>
+                <input
+                  type="text"
+                  value={bluetoothServiceUUID}
+                  onChange={(e) => setBluetoothServiceUUID(e.target.value)}
+                  disabled={isConnected}
+                  placeholder="例如: 0000ffe0-0000-1000-8000-00805f9b34fb"
+                  className="w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 outline-none font-mono text-xs"
+                />
+                <p className="text-xs text-gray-500 mt-1">蓝牙设备的服务 UUID</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-1">特征 UUID (Characteristic UUID)</label>
+                <input
+                  type="text"
+                  value={bluetoothCharacteristicUUID}
+                  onChange={(e) => setBluetoothCharacteristicUUID(e.target.value)}
+                  disabled={isConnected}
+                  placeholder="例如: 0000ffe1-0000-1000-8000-00805f9b34fb"
+                  className="w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 outline-none font-mono text-xs"
+                />
+                <p className="text-xs text-gray-500 mt-1">用于数据读写的特征 UUID</p>
+              </div>
             </div>
           ) : (
             <>
@@ -202,13 +246,19 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-6 space-y-3 bg-white border-t">
         {!isConnected && !isReconnecting ? (
           <button onClick={onConnect} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors flex items-center justify-center">
-            <i className={`fas ${commMode === CommMode.WebSocket ? 'fa-globe' : 'fa-plug'} mr-2`}></i>
-            {commMode === CommMode.WebSocket ? '连接 WebSocket' : '开启串口'}
+            {commMode === CommMode.WebSocket ? (
+              <i className="fas fa-globe mr-2"></i>
+            ) : commMode === CommMode.Bluetooth ? (
+              <span className="mr-2 text-lg"></span>
+            ) : (
+              <i className="fas fa-plug mr-2"></i>
+            )}
+            {commMode === CommMode.WebSocket ? '连接 WebSocket' : commMode === CommMode.Bluetooth ? '扫描蓝牙设备' : '开启串口'}
           </button>
         ) : (
           <button onClick={onDisconnect} className={`w-full ${isReconnecting ? 'bg-orange-500 hover:bg-orange-600' : 'bg-red-500 hover:bg-red-600'} text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors flex items-center justify-center`}>
             <i className={`fas ${isReconnecting ? 'fa-spinner fa-spin' : 'fa-power-off'} mr-2`}></i>
-            {commMode === CommMode.WebSocket ? (isReconnecting ? '放弃重连' : '断开 WebSocket') : '关闭串口'}
+            {commMode === CommMode.WebSocket ? (isReconnecting ? '放弃重连' : '断开 WebSocket') : commMode === CommMode.Bluetooth ? '断开蓝牙' : '关闭串口'}
           </button>
         )}
         

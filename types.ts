@@ -36,7 +36,13 @@ export enum FileSendMode {
 
 export enum CommMode {
   Serial = 'serial',
-  WebSocket = 'websocket'
+  WebSocket = 'websocket',
+  Bluetooth = 'bluetooth'
+}
+
+export interface BluetoothConfig {
+  serviceUUID: string;
+  characteristicUUID: string;
 }
 
 export interface LogEntry {

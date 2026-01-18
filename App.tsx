@@ -10,6 +10,31 @@ import {
   FileSendMode,
   CommMode
 } from './types';
+
+// 蓝牙设备类型定义
+interface BluetoothDevice {
+  name?: string;
+  gatt?: BluetoothRemoteGATTServer | null;
+  addEventListener(type: string, listener: (event: Event) => void): void;
+}
+
+interface BluetoothRemoteGATTServer {
+  connect(): Promise<BluetoothRemoteGATTServer>;
+  disconnect(): void;
+  getPrimaryService(service: string): Promise<BluetoothRemoteGATTService>;
+  connected: boolean;
+}
+
+interface BluetoothRemoteGATTService {
+  getCharacteristic(characteristic: string): Promise<BluetoothRemoteGATTCharacteristic>;
+}
+
+interface BluetoothRemoteGATTCharacteristic {
+  startNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
+  writeValue(value: Uint8Array): Promise<void>;
+  addEventListener(type: string, listener: (event: any) => void): void;
+  value?: DataView;
+}
 import { 
   uint8ArrayToHex, 
   uint8ArrayToString, 
@@ -55,6 +80,18 @@ const App: React.FC = () => {
   const shouldReconnectRef = useRef(true); // 控制是否自动重连
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null); // 重连定时器
   const [isReconnecting, setIsReconnecting] = useState(false); // 是否正在重连中
+
+  // 蓝牙相关状态
+  const [bluetoothServiceUUID, setBluetoothServiceUUID] = useState(() => {
+    const saved = localStorage.getItem('bluetooth_service_uuid');
+    return saved !== null ? saved : '';
+  });
+  const [bluetoothCharacteristicUUID, setBluetoothCharacteristicUUID] = useState(() => {
+    const saved = localStorage.getItem('bluetooth_characteristic_uuid');
+    return saved !== null ? saved : '';
+  });
+  const bluetoothDeviceRef = useRef<BluetoothDevice | null>(null);
+  const bluetoothCharacteristicRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
 
   const [config, setConfig] = useState<SerialConfig>({
     baudRate: 115200,
@@ -208,7 +245,19 @@ const App: React.FC = () => {
   }, [calculateBufferSize]); // 只依赖calculateBufferSize
 
   const disconnect = async () => {
-    if (commMode === CommMode.WebSocket) {
+    if (commMode === CommMode.Bluetooth) {
+      // 蓝牙断开
+      if (bluetoothDeviceRef.current && bluetoothDeviceRef.current.gatt) {
+        try {
+          await bluetoothDeviceRef.current.gatt.disconnect();
+        } catch (e) {}
+      }
+      bluetoothDeviceRef.current = null;
+      bluetoothCharacteristicRef.current = null;
+      setIsConnected(false);
+      setIsPaused(false);
+      addLog('info', new Uint8Array(), '蓝牙已断开');
+    } else if (commMode === CommMode.WebSocket) {
       // WebSocket 断开 - 用户主动关闭
       shouldReconnectRef.current = false; // 禁止自动重连
       setIsReconnecting(false); // 清除重连状态
@@ -241,7 +290,73 @@ const App: React.FC = () => {
   };
 
   const connect = async () => {
-    if (commMode === CommMode.WebSocket) {
+    if (commMode === CommMode.Bluetooth) {
+      // 蓝牙连接
+      if (!('bluetooth' in navigator)) {
+        alert('您的浏览器不支持 Web Bluetooth API。请使用 Chrome 或 Edge 浏览器。');
+        return;
+      }
+
+      if (!bluetoothServiceUUID || !bluetoothCharacteristicUUID) {
+        alert('请先配置蓝牙服务 UUID 和特征 UUID');
+        return;
+      }
+
+      try {
+        // 请求蓝牙设备
+        const device = await (navigator as any).bluetooth.requestDevice({
+          filters: [{ services: [bluetoothServiceUUID] }],
+          optionalServices: [bluetoothServiceUUID]
+        });
+
+        addLog('info', new Uint8Array(), `正在连接蓝牙设备: ${device.name || '未知设备'}`);
+
+        // 连接到 GATT 服务器
+        const server = await device.gatt!.connect();
+        addLog('info', new Uint8Array(), 'GATT 服务器已连接');
+
+        // 获取服务
+        const service = await server.getPrimaryService(bluetoothServiceUUID);
+        addLog('info', new Uint8Array(), '已获取服务');
+
+        // 获取特征
+        const characteristic = await service.getCharacteristic(bluetoothCharacteristicUUID);
+        addLog('info', new Uint8Array(), '已获取特征');
+
+        // 保存设备引用
+        bluetoothDeviceRef.current = device;
+        bluetoothCharacteristicRef.current = characteristic;
+
+        // 订阅通知
+        await characteristic.startNotifications();
+        addLog('info', new Uint8Array(), '已启用通知');
+
+        // 监听特征值变化
+        characteristic.addEventListener('characteristicvaluechanged', (event: any) => {
+          if (isPausedRef.current) return;
+          const value = event.target.value;
+          const data = new Uint8Array(value.buffer);
+          const textChunk = decoderRef.current.decode(data, { stream: true });
+          addLog('rx', data, textChunk);
+        });
+
+        setIsConnected(true);
+        addLog('info', new Uint8Array(), `蓝牙已连接: ${device.name || '未知设备'}`);
+
+        // 监听断开连接事件
+        device.addEventListener('gattserverdisconnected', () => {
+          if (commMode === CommMode.Bluetooth && isConnected) {
+            setIsConnected(false);
+            setIsPaused(false);
+            bluetoothDeviceRef.current = null;
+            bluetoothCharacteristicRef.current = null;
+            addLog('info', new Uint8Array(), '蓝牙设备已断开');
+          }
+        });
+      } catch (err: any) {
+        addLog('error', new Uint8Array(), `蓝牙连接失败: ${err.message}`);
+      }
+    } else if (commMode === CommMode.WebSocket) {
       // WebSocket 连接
       if (!wsUrl) {
         alert('请输入 WebSocket 服务器地址');
@@ -435,7 +550,48 @@ const App: React.FC = () => {
       return;
     }
 
-    if (commMode === CommMode.WebSocket) {
+    if (commMode === CommMode.Bluetooth) {
+      // 蓝牙模式发送文件
+      if (!bluetoothCharacteristicRef.current) {
+        addLog('error', new Uint8Array(), '文件发送失败: 蓝牙未连接');
+        return;
+      }
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const data = new Uint8Array(arrayBuffer);
+        const total = data.length;
+
+        // 添加文件发送的TX日志
+        addLog('tx', data, `文件: ${file.name} (${total} 字节)`);
+        addLog('info', new Uint8Array(), `开始发送文件: ${file.name} (${total} 字节)`);
+
+        let sent = 0;
+        while (sent < total) {
+          if (isPaused) {
+            addLog('error', new Uint8Array(), '文件发送中断: 已暂停');
+            break;
+          }
+
+          // 蓝牙MTU限制，通常最大512字节，使用安全值20字节
+          const chunkSize = Math.min(options.throttleBytes, 20);
+          const chunk = data.slice(sent, sent + chunkSize);
+          await bluetoothCharacteristicRef.current.writeValue(chunk);
+          sent += chunk.length;
+          options.onProgress(Math.round((sent / total) * 100));
+
+          if (options.throttleMs > 0 && sent < total) {
+            await new Promise(resolve => setTimeout(resolve, options.throttleMs));
+          }
+        }
+
+        if (!isPaused) {
+          addLog('info', new Uint8Array(), '文件发送完毕');
+        }
+      } catch (err: any) {
+        addLog('error', new Uint8Array(), `文件发送中断: ${err.message}`);
+      }
+    } else if (commMode === CommMode.WebSocket) {
       // WebSocket 模式发送文件
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         addLog('error', new Uint8Array(), '文件发送失败: WebSocket 未连接');
@@ -532,7 +688,13 @@ const App: React.FC = () => {
       if (!item) break;
 
       try {
-        if (commMode === CommMode.WebSocket) {
+        if (commMode === CommMode.Bluetooth) {
+          // 蓝牙模式发送
+          if (bluetoothCharacteristicRef.current) {
+            // 蓝牙发送字节数据
+            await bluetoothCharacteristicRef.current.writeValue(item.data);
+          }
+        } else if (commMode === CommMode.WebSocket) {
           // WebSocket 模式发送
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             // 根据发送模式选择发送方式
@@ -634,6 +796,8 @@ const App: React.FC = () => {
         currentBufferSize={currentBufferSize}
         commMode={commMode} setCommMode={setCommMode}
         wsUrl={wsUrl} setWsUrl={setWsUrl}
+        bluetoothServiceUUID={bluetoothServiceUUID} setBluetoothServiceUUID={setBluetoothServiceUUID}
+        bluetoothCharacteristicUUID={bluetoothCharacteristicUUID} setBluetoothCharacteristicUUID={setBluetoothCharacteristicUUID}
         onConnect={connect} onDisconnect={disconnect} 
         isReconnecting={isReconnecting}
       />
