@@ -51,6 +51,7 @@ const App: React.FC = () => {
   const wsRef = useRef<WebSocket | null>(null);
   const shouldReconnectRef = useRef(true); // 控制是否自动重连
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null); // 重连定时器
+  const [isReconnecting, setIsReconnecting] = useState(false); // 是否正在重连中
 
   const [config, setConfig] = useState<SerialConfig>({
     baudRate: 115200,
@@ -202,6 +203,7 @@ const App: React.FC = () => {
     if (commMode === CommMode.WebSocket) {
       // WebSocket 断开 - 用户主动关闭
       shouldReconnectRef.current = false; // 禁止自动重连
+      setIsReconnecting(false); // 清除重连状态
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
@@ -243,6 +245,7 @@ const App: React.FC = () => {
 
         ws.onopen = () => {
           setIsConnected(true);
+          setIsReconnecting(false);
           addLog('info', new Uint8Array(), `WebSocket 已连接: ${wsUrl}`);
         };
 
@@ -281,11 +284,13 @@ const App: React.FC = () => {
           
           // 如果需要重连，则启动自动重连
           if (shouldReconnectRef.current && commMode === CommMode.WebSocket) {
+            setIsReconnecting(true);
             addLog('info', new Uint8Array(), 'WebSocket 连接已断开，1秒后尝试重连...');
             reconnectTimerRef.current = setTimeout(() => {
               connect();
             }, 1000);
           } else {
+            setIsReconnecting(false);
             addLog('info', new Uint8Array(), 'WebSocket 连接已关闭');
           }
         };
@@ -613,6 +618,7 @@ const App: React.FC = () => {
         commMode={commMode} setCommMode={setCommMode}
         wsUrl={wsUrl} setWsUrl={setWsUrl}
         onConnect={connect} onDisconnect={disconnect} 
+        isReconnecting={isReconnecting}
       />
 
       <main className="flex-1 flex flex-col min-w-0 bg-white">
@@ -701,11 +707,11 @@ const App: React.FC = () => {
         
 
         <div className="bg-white border-t shadow-sm m-2 mb-2" style={{ height: `${100 - splitPosition}%`, minHeight: '80px' }}>
-          <Sender onSend={sendData} onFileSend={handleFileSend} isConnected={isConnected && !isPaused} />
+          <Sender onSend={sendData} onFileSend={handleFileSend} isConnected={isConnected && !isPaused} isReconnecting={isReconnecting} />
         </div>
       </main>
 
-      <QuickSendList items={quickSendItems} onUpdate={setQuickSendItems} onSend={sendData} isConnected={isConnected && !isPaused} />
+      <QuickSendList items={quickSendItems} onUpdate={setQuickSendItems} onSend={sendData} isConnected={isConnected && !isPaused} isReconnecting={isReconnecting} />
     </div>
   );
 };

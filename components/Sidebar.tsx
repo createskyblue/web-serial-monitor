@@ -18,6 +18,7 @@ interface SidebarProps {
   setWsUrl: (val: string) => void;
   onConnect: () => void;
   onDisconnect: () => void;
+  isReconnecting?: boolean;
 }
 
 const baudRates = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
@@ -55,7 +56,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   wsUrl,
   setWsUrl,
   onConnect,
-  onDisconnect
+  onDisconnect,
+  isReconnecting = false
 }) => {
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -198,15 +200,15 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="p-6 space-y-3 bg-white border-t">
-        {!isConnected ? (
+        {!isConnected && !isReconnecting ? (
           <button onClick={onConnect} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors flex items-center justify-center">
             <i className={`fas ${commMode === CommMode.WebSocket ? 'fa-globe' : 'fa-plug'} mr-2`}></i>
             {commMode === CommMode.WebSocket ? '连接 WebSocket' : '开启串口'}
           </button>
         ) : (
-          <button onClick={onDisconnect} className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors flex items-center justify-center">
-            <i className="fas fa-power-off mr-2"></i>
-            {commMode === CommMode.WebSocket ? '断开 WebSocket' : '关闭串口'}
+          <button onClick={onDisconnect} className={`w-full ${isReconnecting ? 'bg-orange-500 hover:bg-orange-600' : 'bg-red-500 hover:bg-red-600'} text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors flex items-center justify-center`}>
+            <i className={`fas ${isReconnecting ? 'fa-spinner fa-spin' : 'fa-power-off'} mr-2`}></i>
+            {commMode === CommMode.WebSocket ? (isReconnecting ? '放弃重连' : '断开 WebSocket') : '关闭串口'}
           </button>
         )}
         

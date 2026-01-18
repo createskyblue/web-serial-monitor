@@ -7,9 +7,10 @@ interface QuickSendListProps {
   onSend: (content: string, mode: DisplayMode) => void;
   onUpdate: (items: QuickSendItem[]) => void;
   isConnected: boolean;
+  isReconnecting?: boolean;
 }
 
-const QuickSendList: React.FC<QuickSendListProps> = ({ items, onSend, onUpdate, isConnected }) => {
+const QuickSendList: React.FC<QuickSendListProps> = ({ items, onSend, onUpdate, isConnected, isReconnecting = false }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addItem = () => {
@@ -118,7 +119,7 @@ const QuickSendList: React.FC<QuickSendListProps> = ({ items, onSend, onUpdate, 
               
               <button 
                 onClick={() => onSend(item.content, item.mode)}
-                disabled={!isConnected || !item.content}
+                disabled={(!isConnected && !isReconnecting) || !item.content}
                 className="px-4 py-1 bg-blue-500 hover:bg-blue-600 disabled:opacity-30 text-white text-[10px] font-bold rounded shadow-sm transition-colors flex items-center"
               >
                 发送
