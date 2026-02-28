@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { SerialConfig, DataBits, StopBits, Parity, CommMode } from '../types';
 
 interface SidebarProps {
@@ -27,7 +27,7 @@ interface SidebarProps {
   isReconnecting?: boolean;
 }
 
-const baudRates = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
+const baudRates = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000];
 const bufferSizes = [
   { value: 50 * 1024, label: '50 KB' },
   { value: 100 * 1024, label: '100 KB' },
@@ -71,6 +71,16 @@ const Sidebar: React.FC<SidebarProps> = ({
   onDisconnect,
   isReconnecting = false
 }) => {
+  // 自定义波特率状态
+  const [isCustomBaudRate, setIsCustomBaudRate] = useState(() => {
+    const saved = localStorage.getItem('is_custom_baudrate');
+    return saved ? saved === 'true' : false;
+  });
+  const [customBaudRate, setCustomBaudRate] = useState(() => {
+    const saved = localStorage.getItem('custom_baudrate');
+    return saved ? saved : '';
+  });
+
   // 持久化蓝牙配置
   useEffect(() => {
     localStorage.setItem('bluetooth_service_uuid', bluetoothServiceUUID);
@@ -83,12 +93,45 @@ const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     localStorage.setItem('bluetooth_rx_characteristic_uuid', bluetoothRxCharacteristicUUID);
   }, [bluetoothRxCharacteristicUUID]);
+
+  // 持久化自定义波特率设置
+  useEffect(() => {
+    localStorage.setItem('is_custom_baudrate', isCustomBaudRate.toString());
+  }, [isCustomBaudRate]);
+
+  useEffect(() => {
+    localStorage.setItem('custom_baudrate', customBaudRate);
+  }, [customBaudRate]);
+
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setConfig(prev => ({
-      ...prev,
-      [name]: name === 'baudRate' || name === 'dataBits' || name === 'stopBits' ? Number(value) : value
-    }));
+    if (name === 'baudRate') {
+      if (value === 'custom') {
+        setIsCustomBaudRate(true);
+        // 如果有自定义值，使用它，否则保持当前值
+        if (customBaudRate && !isNaN(Number(customBaudRate))) {
+          setConfig(prev => ({ ...prev, baudRate: Number(customBaudRate) }));
+        }
+      } else {
+        setIsCustomBaudRate(false);
+        setConfig(prev => ({ ...prev, baudRate: Number(value) }));
+      }
+    } else {
+      setConfig(prev => ({
+        ...prev,
+        [name]: name === 'dataBits' || name === 'stopBits' ? Number(value) : value
+      }));
+    }
+  };
+
+  const handleCustomBaudRateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    // 只允许输入数字
+    if (value && !/^\d+$/.test(value)) return;
+    setCustomBaudRate(value);
+    if (value && !isNaN(Number(value)) && Number(value) > 0) {
+      setConfig(prev => ({ ...prev, baudRate: Number(value) }));
+    }
   };
 
   const handleBufferSizeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -177,9 +220,26 @@ const Sidebar: React.FC<SidebarProps> = ({
             <>
               <div>
                 <label className="block text-sm font-medium text-gray-600 mb-1">波特率</label>
-                <select name="baudRate" value={config.baudRate} onChange={handleChange} disabled={isConnected} className="w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 outline-none">
+                <select 
+                  name="baudRate" 
+                  value={isCustomBaudRate ? 'custom' : config.baudRate} 
+                  onChange={handleChange} 
+                  disabled={isConnected} 
+                  className="w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 outline-none"
+                >
                   {baudRates.map(br => <option key={br} value={br}>{br}</option>)}
+                  <option value="custom">自定义</option>
                 </select>
+                {isCustomBaudRate && (
+                  <input
+                    type="text"
+                    value={customBaudRate}
+                    onChange={handleCustomBaudRateChange}
+                    disabled={isConnected}
+                    placeholder="输入波特率"
+                    className="w-full mt-2 bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 outline-none font-mono"
+                  />
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
