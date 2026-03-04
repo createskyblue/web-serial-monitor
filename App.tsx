@@ -65,6 +65,10 @@ interface SerialPort {
 const App: React.FC = () => {
   const [port, setPort] = useState<SerialPort | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+
+  // 串口选择状态管理
+  const [savedSerialPort, setSavedSerialPort] = useState<SerialPort | null>(null);
+
   const [isAutoLineBreak, setIsAutoLineBreak] = useState(() => {
     const saved = localStorage.getItem('is_auto_line_break');
     return saved ? saved === 'true' : false;
@@ -150,7 +154,7 @@ const App: React.FC = () => {
   const maxBufferSizeRef = useRef(maxBufferSize); // 使用ref来跟踪maxBufferSize的最新值
   const sendQueueRef = useRef<{data: Uint8Array, text: string, mode: DisplayMode}[]>([]); // 发送队列
   const isSendingRef = useRef(false); // 是否正在发送
-  
+
   // 用于统计每秒\n的计数器
   const newlineCountRef = useRef(0);
   const lastFrequencyUpdateRef = useRef(Date.now());
@@ -327,6 +331,7 @@ const App: React.FC = () => {
       setIsConnected(false);
       setIsPaused(false);
       addLog('info', new Uint8Array(), '串口已关闭');
+      // 注意：不清除 savedSerialPort，这样下次可以直接连接
     }
   };
 
@@ -494,23 +499,42 @@ const App: React.FC = () => {
         alert('您的浏览器不支持 Web Serial API。');
         return;
       }
+
       try {
-        const selectedPort = await (navigator as any).serial.requestPort();
-        await selectedPort.open({
-          baudRate: config.baudRate,
-          dataBits: config.dataBits,
-          stopBits: config.stopBits,
-          parity: config.parity,
-          flowControl: config.flowControl
-        });
-        setPort(selectedPort);
-        setIsConnected(true);
-        keepReadingRef.current = true;
-        addLog('info', new Uint8Array(), `已连接: ${config.baudRate} bps`);
-        readLoop(selectedPort);
+        let targetPort = savedSerialPort;
+
+        // 如果没有保存的串口，弹窗选择
+        if (!targetPort) {
+          targetPort = await (navigator as any).serial.requestPort();
+          setSavedSerialPort(targetPort);
+        }
+
+        await openSerialPort(targetPort);
       } catch (err: any) {
         addLog('error', new Uint8Array(), `连接失败: ${err.message}`);
       }
+    }
+  };
+
+  // 打开串口的辅助函数
+  const openSerialPort = async (targetPort: SerialPort) => {
+    try {
+      await targetPort.open({
+        baudRate: config.baudRate,
+        dataBits: config.dataBits,
+        stopBits: config.stopBits,
+        parity: config.parity,
+        flowControl: config.flowControl
+      });
+      setPort(targetPort);
+      setIsConnected(true);
+      keepReadingRef.current = true;
+      addLog('info', new Uint8Array(), `已连接: ${config.baudRate} bps`);
+      readLoop(targetPort);
+    } catch (err: any) {
+      addLog('error', new Uint8Array(), `打开串口失败: ${err.message}`);
+      // 如果打开失败，清除保存的串口
+      setSavedSerialPort(null);
     }
   };
 
@@ -852,8 +876,8 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden text-gray-800">
-      <Sidebar 
-        config={config} setConfig={setConfig} isConnected={isConnected} 
+      <Sidebar
+        config={config} setConfig={setConfig} isConnected={isConnected}
         isAutoLineBreak={isAutoLineBreak} setIsAutoLineBreak={setIsAutoLineBreak}
         isAutoScroll={isAutoScroll} setIsAutoScroll={setIsAutoScroll}
         maxBufferSize={maxBufferSize} setMaxBufferSize={setMaxBufferSize}
@@ -863,8 +887,19 @@ const App: React.FC = () => {
         bluetoothServiceUUID={bluetoothServiceUUID} setBluetoothServiceUUID={setBluetoothServiceUUID}
         bluetoothTxCharacteristicUUID={bluetoothTxCharacteristicUUID} setBluetoothTxCharacteristicUUID={setBluetoothTxCharacteristicUUID}
         bluetoothRxCharacteristicUUID={bluetoothRxCharacteristicUUID} setBluetoothRxCharacteristicUUID={setBluetoothRxCharacteristicUUID}
-        onConnect={connect} onDisconnect={disconnect} 
+        onConnect={connect} onDisconnect={disconnect}
         isReconnecting={isReconnecting}
+        hasSavedSerialPort={!!savedSerialPort}
+        onReselectSerialPort={async () => {
+          if (!('serial' in navigator)) return;
+          try {
+            const newPort = await (navigator as any).serial.requestPort();
+            setSavedSerialPort(newPort);
+            addLog('info', new Uint8Array(), '已选择新串口，点击"连接串口"按钮连接');
+          } catch (err: any) {
+            addLog('error', new Uint8Array(), `选择串口失败: ${err.message}`);
+          }
+        }}
       />
 
       <main className="flex-1 flex flex-col min-w-0 bg-white">

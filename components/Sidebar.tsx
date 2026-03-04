@@ -1,6 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { SerialConfig, DataBits, StopBits, Parity, CommMode } from '../types';
 
+interface SerialPort {
+  readonly readable: ReadableStream<Uint8Array> | null;
+  readonly writable: WritableStream<Uint8Array> | null;
+  open(options: {
+    baudRate: number;
+    dataBits?: number;
+    stopBits?: number;
+    parity?: string;
+    bufferSize?: number;
+    flowControl?: string;
+  }): Promise<void>;
+  close(): Promise<void>;
+}
+
 interface SidebarProps {
   config: SerialConfig;
   setConfig: React.Dispatch<React.SetStateAction<SerialConfig>>;
@@ -25,9 +39,55 @@ interface SidebarProps {
   onConnect: () => void;
   onDisconnect: () => void;
   isReconnecting?: boolean;
+  // 串口选择相关
+  hasSavedSerialPort?: boolean;
+  onReselectSerialPort?: () => void;
 }
 
 const baudRates = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000];
+
+// 常见 USB 转串口芯片的 VID/PID 映射
+const USB_CHIP_NAMES: Record<string, string> = {
+  '1a86_7523': 'CH340',
+  '1a86_7522': 'CH340',
+  '1a86_5523': 'CH341',
+  '0403_6001': 'FT232R',
+  '0403_6010': 'FT2232H',
+  '0403_6011': 'FT4232H',
+  '0403_6014': 'FT232H',
+  '0403_6015': 'FT230X',
+  '10c4_ea60': 'CP2102',
+  '10c4_ea70': 'CP2105',
+  '067b_2303': 'PL2303',
+  '067b_23a3': 'PL2303',
+  '1546_01a8': 'u-blox GPS',
+  '2341_0043': 'Arduino Uno',
+  '2341_0001': 'Arduino Uno',
+  '2a03_0043': 'Arduino Uno',
+  '2341_0042': 'Arduino Mega',
+  '2341_0010': 'Arduino Mega',
+  '239a_800b': 'CircuitPlayground',
+  '239a_801b': 'Metro M0',
+  '0483_5740': 'STM32 VCP',
+  '0483_374b': 'ST-Link V2-1',
+};
+
+// 获取串口显示名称
+const getPortDisplayName = (port: any, index: number): string => {
+  const info = port.getInfo?.() || {};
+  const usbVendorId = info.usbVendorId;
+  const usbProductId = info.usbProductId;
+
+  if (usbVendorId !== undefined && usbProductId !== undefined) {
+    const key = `${usbVendorId.toString(16)}_${usbProductId.toString(16)}`.toLowerCase();
+    const chipName = USB_CHIP_NAMES[key];
+    if (chipName) {
+      return `${chipName} (${usbVendorId.toString(16).padStart(4, '0')}:${usbProductId.toString(16).padStart(4, '0')})`;
+    }
+    return `USB ${usbVendorId.toString(16).padStart(4, '0')}:${usbProductId.toString(16).padStart(4, '0')}`;
+  }
+  return `串口 ${index + 1}`;
+};
 const bufferSizes = [
   { value: 50 * 1024, label: '50 KB' },
   { value: 100 * 1024, label: '100 KB' },
@@ -69,7 +129,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   setBluetoothRxCharacteristicUUID,
   onConnect,
   onDisconnect,
-  isReconnecting = false
+  isReconnecting = false,
+  hasSavedSerialPort = false,
+  onReselectSerialPort
 }) => {
   // 自定义波特率状态
   const [isCustomBaudRate, setIsCustomBaudRate] = useState(() => {
@@ -220,11 +282,11 @@ const Sidebar: React.FC<SidebarProps> = ({
             <>
               <div>
                 <label className="block text-sm font-medium text-gray-600 mb-1">波特率</label>
-                <select 
-                  name="baudRate" 
-                  value={isCustomBaudRate ? 'custom' : config.baudRate} 
-                  onChange={handleChange} 
-                  disabled={isConnected} 
+                <select
+                  name="baudRate"
+                  value={isCustomBaudRate ? 'custom' : config.baudRate}
+                  onChange={handleChange}
+                  disabled={isConnected}
                   className="w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 outline-none"
                 >
                   {baudRates.map(br => <option key={br} value={br}>{br}</option>)}
@@ -325,23 +387,35 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       <div className="p-6 space-y-3 bg-white border-t">
         {!isConnected && !isReconnecting ? (
-          <button onClick={onConnect} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors flex items-center justify-center">
-            {commMode === CommMode.WebSocket ? (
-              <i className="fas fa-globe mr-2"></i>
-            ) : commMode === CommMode.Bluetooth ? (
-              <span className="mr-2 text-lg"></span>
-            ) : (
-              <i className="fas fa-plug mr-2"></i>
+          <>
+            {/* 串口模式下，如果有已保存的串口，显示重新选择按钮 */}
+            {commMode === CommMode.Serial && hasSavedSerialPort && (
+              <button
+                onClick={onReselectSerialPort}
+                className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 px-4 rounded-lg border border-gray-300 transition-colors flex items-center justify-center text-sm"
+              >
+                <i className="fas fa-exchange-alt mr-2"></i>
+                重新选择串口
+              </button>
             )}
-            {commMode === CommMode.WebSocket ? '连接 WebSocket' : commMode === CommMode.Bluetooth ? '扫描蓝牙设备' : '开启串口'}
-          </button>
+            <button onClick={onConnect} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors flex items-center justify-center">
+              {commMode === CommMode.WebSocket ? (
+                <i className="fas fa-globe mr-2"></i>
+              ) : commMode === CommMode.Bluetooth ? (
+                <span className="mr-2 text-lg"></span>
+              ) : (
+                <i className="fas fa-plug mr-2"></i>
+              )}
+              {commMode === CommMode.WebSocket ? '连接 WebSocket' : commMode === CommMode.Bluetooth ? '扫描蓝牙设备' : (hasSavedSerialPort ? '连接串口' : '选择串口')}
+            </button>
+          </>
         ) : (
           <button onClick={onDisconnect} className={`w-full ${isReconnecting ? 'bg-orange-500 hover:bg-orange-600' : 'bg-red-500 hover:bg-red-600'} text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors flex items-center justify-center`}>
             <i className={`fas ${isReconnecting ? 'fa-spinner fa-spin' : 'fa-power-off'} mr-2`}></i>
             {commMode === CommMode.WebSocket ? (isReconnecting ? '放弃重连' : '断开 WebSocket') : commMode === CommMode.Bluetooth ? '断开蓝牙' : '关闭串口'}
           </button>
         )}
-        
+
         {isBufferNearLimit && (
           <div className="text-xs text-red-600 bg-red-50 p-2 rounded border border-red-200">
             <i className="fas fa-exclamation-triangle mr-1"></i>
