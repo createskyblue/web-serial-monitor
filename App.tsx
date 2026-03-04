@@ -65,13 +65,25 @@ interface SerialPort {
 const App: React.FC = () => {
   const [port, setPort] = useState<SerialPort | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [isAutoLineBreak, setIsAutoLineBreak] = useState(false);
-  const [isAutoScroll, setIsAutoScroll] = useState(true);
+  const [isAutoLineBreak, setIsAutoLineBreak] = useState(() => {
+    const saved = localStorage.getItem('is_auto_line_break');
+    return saved ? saved === 'true' : false;
+  });
+  const [isAutoScroll, setIsAutoScroll] = useState(() => {
+    const saved = localStorage.getItem('is_auto_scroll');
+    return saved ? saved === 'true' : true;
+  });
   const [isPaused, setIsPaused] = useState(false); // 新增暂停状态
-  const [maxBufferSize, setMaxBufferSize] = useState(100 * 1024); // 最大缓冲区大小，默认100KB
+  const [maxBufferSize, setMaxBufferSize] = useState(() => {
+    const saved = localStorage.getItem('max_buffer_size');
+    return saved ? parseInt(saved, 10) : 100 * 1024;
+  }); // 最大缓冲区大小，默认100KB
 
   // WebSocket 相关状态
-  const [commMode, setCommMode] = useState<CommMode>(CommMode.Serial);
+  const [commMode, setCommMode] = useState<CommMode>(() => {
+    const saved = localStorage.getItem('comm_mode');
+    return saved ? saved as CommMode : CommMode.Serial;
+  });
   const [wsUrl, setWsUrl] = useState(() => {
     const saved = localStorage.getItem('ws_url');
     return saved !== null ? saved : 'ws://localhost:8080';
@@ -98,13 +110,23 @@ const App: React.FC = () => {
   const bluetoothTxCharacteristicRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
   const bluetoothRxCharacteristicRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
 
-  const [config, setConfig] = useState<SerialConfig>({
-    baudRate: 115200,
-    dataBits: DataBits.Eight,
-    stopBits: StopBits.One,
-    parity: Parity.None,
-    bufferSize: 255,
-    flowControl: 'none'
+  const [config, setConfig] = useState<SerialConfig>(() => {
+    const saved = localStorage.getItem('serial_config');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        // 解析失败，使用默认值
+      }
+    }
+    return {
+      baudRate: 115200,
+      dataBits: DataBits.Eight,
+      stopBits: StopBits.One,
+      parity: Parity.None,
+      bufferSize: 255,
+      flowControl: 'none'
+    };
   });
   
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -133,6 +155,21 @@ const App: React.FC = () => {
   const newlineCountRef = useRef(0);
   const lastFrequencyUpdateRef = useRef(Date.now());
 
+  // 累计收发统计（不随缓冲区清理而重置）
+  const [totalRxBytes, setTotalRxBytes] = useState(0);
+  const [totalTxBytes, setTotalTxBytes] = useState(0);
+  const totalRxBytesRef = useRef(0);
+  const totalTxBytesRef = useRef(0);
+
+  // 同步累计计数到 ref
+  useEffect(() => {
+    totalRxBytesRef.current = totalRxBytes;
+  }, [totalRxBytes]);
+
+  useEffect(() => {
+    totalTxBytesRef.current = totalTxBytes;
+  }, [totalTxBytes]);
+
   // 同步isPaused状态到ref
   useEffect(() => {
     isPausedRef.current = isPaused;
@@ -148,18 +185,29 @@ const App: React.FC = () => {
     localStorage.setItem('max_buffer_size', maxBufferSize.toString());
   }, [maxBufferSize]);
 
-  // 从localStorage恢复设置
-  useEffect(() => {
-    const saved = localStorage.getItem('max_buffer_size');
-    if (saved) {
-      setMaxBufferSize(parseInt(saved, 10));
-    }
-  }, []);
-
   // 保存WebSocket URL到localStorage
   useEffect(() => {
     localStorage.setItem('ws_url', wsUrl);
   }, [wsUrl]);
+
+  // 保存通讯模式到localStorage
+  useEffect(() => {
+    localStorage.setItem('comm_mode', commMode);
+  }, [commMode]);
+
+  // 保存串口配置到localStorage
+  useEffect(() => {
+    localStorage.setItem('serial_config', JSON.stringify(config));
+  }, [config]);
+
+  // 保存终端设置到localStorage
+  useEffect(() => {
+    localStorage.setItem('is_auto_line_break', isAutoLineBreak.toString());
+  }, [isAutoLineBreak]);
+
+  useEffect(() => {
+    localStorage.setItem('is_auto_scroll', isAutoScroll.toString());
+  }, [isAutoScroll]);
 
   useEffect(() => {
     localStorage.setItem('quick_send_list', JSON.stringify(quickSendItems));
@@ -196,58 +244,45 @@ const App: React.FC = () => {
   }, []);
 
   const addLog = useCallback((type: LogEntry['type'], data: Uint8Array, newText: string) => {
-    console.log('addLog called:', type, newText.substring(0, 50)); // 调试日志
-    
+    // 更新累计字节统计
+    if (type === 'rx') {
+      setTotalRxBytes(prev => prev + data.length);
+      const newlineCount = (newText.match(/\n/g) || []).length;
+      newlineCountRef.current += newlineCount;
+    } else if (type === 'tx') {
+      setTotalTxBytes(prev => prev + data.length);
+    }
+
     setLogs(prev => {
-      let updatedLogs: LogEntry[];
-      
-      // 简化逻辑：每次都创建新日志，不进行合并
-      // 检查新文本中包含多少个\n，更新计数器
-      if (type === 'rx') {
-        const newlineCount = (newText.match(/\n/g) || []).length;
-        newlineCountRef.current += newlineCount;
+      // 检查日志数量限制
+      if (prev.length >= 1000) {
+        // 保留后500条，避免频繁数组操作
+        prev = prev.slice(-500);
       }
-      
+
       const newLog: LogEntry = {
         id: Math.random().toString(36).substr(2, 9),
         timestamp: new Date(),
         type,
         data,
         text: newText,
-        byteCount: data.length // 记录实际字节数
+        byteCount: data.length
       };
-      updatedLogs = [...prev, newLog];
-      
-      console.log('Updated logs before buffer check:', updatedLogs.length); // 调试日志
-      
-      // 重新启用缓冲区检查
-      // 简化缓冲区检查 - 只在日志数量过多时清理
-      if (updatedLogs.length > 1000) {
-        // 删除最旧的500条记录
-        const trimmedLogs = updatedLogs.slice(-500);
-        console.log(`日志数量过多，已清理。当前数量: ${trimmedLogs.length}`);
-        return trimmedLogs;
-      }
-      
-      // 检查缓冲区大小限制 - 使用ref获取最新的maxBufferSize
+      let updatedLogs = [...prev, newLog];
+
+      // 检查缓冲区大小限制
+      const currentMaxBufferSize = maxBufferSizeRef.current;
       const currentSize = calculateBufferSize(updatedLogs);
-      const currentMaxBufferSize = maxBufferSizeRef.current; // 从ref获取最新值
-      console.log(`检查缓冲区: 当前大小=${currentSize}, 限制=${currentMaxBufferSize}`); // 调试日志
-      
+
       if (currentSize > currentMaxBufferSize) {
-        // 从最旧的记录开始删除，直到缓冲区大小在限制内
-        let tempLogs = [...updatedLogs];
-        while (calculateBufferSize(tempLogs) > currentMaxBufferSize && tempLogs.length > 10) {
-          tempLogs.shift();
-        }
-        console.log(`缓冲区超限，已清理。当前大小: ${calculateBufferSize(tempLogs)}, 限制: ${currentMaxBufferSize}`);
-        return tempLogs;
+        // 保留后 95% 的数据，只删除最旧的 5%
+        const keepCount = Math.max(100, Math.floor(updatedLogs.length * 0.95));
+        updatedLogs = updatedLogs.slice(-keepCount);
       }
-      
-      console.log('Final logs count:', updatedLogs.length); // 调试日志
+
       return updatedLogs;
     });
-  }, [calculateBufferSize]); // 只依赖calculateBufferSize
+  }, [calculateBufferSize]);
 
   const disconnect = async () => {
     if (commMode === CommMode.Bluetooth) {
@@ -890,22 +925,44 @@ const App: React.FC = () => {
               {isPaused ? '恢复' : '暂停'}
             </button>
             
-            <button onClick={() => setLogs([])} className="px-4 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-md text-xs transition-colors shadow-sm">
+            <button
+              onClick={() => {
+                setLogs([]);
+                setTotalRxBytes(0);
+                setTotalTxBytes(0);
+              }}
+              className="px-4 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-md text-xs transition-colors shadow-sm"
+              title="清空屏幕和统计数据"
+            >
               清屏
+            </button>
+
+            <button
+              onClick={() => {
+                setTotalRxBytes(0);
+                setTotalTxBytes(0);
+                addLog('info', new Uint8Array(), '统计数据已重置');
+              }}
+              className="px-4 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-md text-xs transition-colors shadow-sm"
+              title="仅重置统计计数"
+            >
+              清计数
             </button>
           </div>
         </header>
 
         <div className="flex-1 overflow-hidden flex flex-col" style={{ height: `${splitPosition}%` }}>
           <div className="flex-1 overflow-hidden p-2 flex flex-col">
-            <Terminal 
-              logs={logs} 
-              displayMode={displayMode} 
+            <Terminal
+              logs={logs}
+              displayMode={displayMode}
               isAutoLineBreak={isAutoLineBreak}
               terminalEndRef={terminalEndRef}
               aiAnalysis={null}
               onCloseAi={() => {}}
               lineFrequency={lineFrequency}
+              totalRxBytes={totalRxBytes}
+              totalTxBytes={totalTxBytes}
             />
           </div>
         </div>

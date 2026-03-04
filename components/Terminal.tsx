@@ -10,9 +10,11 @@ interface TerminalProps {
   aiAnalysis: string | null; // Keep prop for compatibility but don't use
   onCloseAi: () => void;
   lineFrequency?: number; // 新增频率属性
+  totalRxBytes?: number; // 累计接收字节数
+  totalTxBytes?: number; // 累计发送字节数
 }
 
-const Terminal: React.FC<TerminalProps> = ({ logs, displayMode, isAutoLineBreak, terminalEndRef, lineFrequency }) => {
+const Terminal: React.FC<TerminalProps> = ({ logs, displayMode, isAutoLineBreak, terminalEndRef, lineFrequency, totalRxBytes = 0, totalTxBytes = 0 }) => {
   return (
     <div className="flex-1 bg-white rounded-xl overflow-hidden shadow-sm flex flex-col relative border border-gray-200 h-full">
       {/* Logs Window */}
@@ -64,8 +66,8 @@ const Terminal: React.FC<TerminalProps> = ({ logs, displayMode, isAutoLineBreak,
       <div className="bg-white px-4 py-1.5 text-[10px] text-gray-400 flex justify-between border-t border-gray-100 font-sans select-none">
         <div className="flex space-x-4">
           <span>总行数: {logs.length}</span>
-          <span className="text-emerald-600">接收: {logs.filter(l => l.type === 'rx').reduce((sum, l) => sum + l.byteCount, 0)} 字节</span>
-          <span className="text-blue-600">发送: {logs.filter(l => l.type === 'tx').reduce((sum, l) => sum + l.byteCount, 0)} 字节</span>
+          <span className="text-emerald-600">接收: {totalRxBytes} 字节</span>
+          <span className="text-blue-600">发送: {totalTxBytes} 字节</span>
           {/* 显示每秒换行符频率 */}
           <span className="text-purple-600">换行频率: {lineFrequency !== undefined ? `${lineFrequency} 行/秒` : '0 行/秒'}</span>
         </div>
