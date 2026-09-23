@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { LogEntry, DisplayMode, Rule } from '../types';
 import { hexToUint8Array, uint8ArrayToString } from '../utils/converters';
 
@@ -215,8 +215,15 @@ const Terminal: React.FC<TerminalProps> = ({
   const sentinelRef = useRef<HTMLDivElement>(null);
   const prevScrollHeightRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
-  const isAtBottomRef = useRef(true); // 用户是否在底部
-  const lastScrollTopRef = useRef(0); // 上次滚动位置，用于判断是否真正向上滚动
+  const isAtBottomRef = useRef(true); // 是否粘在底部（sticky）
+  const lastScrollTopRef = useRef(0);
+  const lastScrollHeightRef = useRef(0);
+  // 用户主动上滑意图（滚轮/触摸/键盘/滚动条），仅此时才解除粘底
+  const userScrollUpRef = useRef(false);
+  // 上滑意图产生时的 scrollTop，用于确认「真的往上滚了」而不是内容增高造成的离底
+  const userScrollIntentTopRef = useRef(0);
+  // 程序化粘底滚动进行中，期间的 scroll 事件不解除粘底
+  const isProgrammaticScrollRef = useRef(false);
   // 用 ref 保存最新回调，避免滚动监听器重复注册导致闭包过期
   const onReachedBottomRef = useRef(onReachedBottom);
   onReachedBottomRef.current = onReachedBottom;
@@ -227,31 +234,129 @@ const Terminal: React.FC<TerminalProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // 监听滚动位置，判断用户是否在底部
+  const scrollToBottom = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    isProgrammaticScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    lastScrollTopRef.current = el.scrollTop;
+    lastScrollHeightRef.current = el.scrollHeight;
+    // 滚动事件异步派发，下一帧后再允许用户意图解锁
+    requestAnimationFrame(() => {
+      isProgrammaticScrollRef.current = false;
+    });
+  }, []);
+
+  // 滚动：区分「内容变化导致的位移」与「用户真正上滑」
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
     const threshold = 50; // 距离底部50px以内视为在底部
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distance < threshold;
+    const topDelta = el.scrollTop - lastScrollTopRef.current;
+    const heightDelta = el.scrollHeight - lastScrollHeightRef.current;
     const wasAtBottom = isAtBottomRef.current;
+
     if (atBottom) {
       isAtBottomRef.current = true;
+      userScrollUpRef.current = false;
       // 从历史区域滚回底部 → 通知卸载已加载的旧区域（还原渲染窗口）
       if (!wasAtBottom) onReachedBottomRef.current?.();
-    } else if (el.scrollTop < lastScrollTopRef.current) {
-      // 仅当真正向上滚动（scrollTop 变小）时才解除自动滚动跟随；
-      // 内容增长/延迟派发的 scroll 事件 scrollTop 未变，不会误判为离开底部
-      isAtBottomRef.current = false;
+    } else if (isProgrammaticScrollRef.current) {
+      // 程序化粘底过程中，保持粘底状态
+    } else if (userScrollUpRef.current) {
+      // 有上滑意图且已离底：确认 scrollTop 相对意图时刻确实下降过，或已明显离开底部
+      const intentTop = userScrollIntentTopRef.current;
+      if (el.scrollTop <= intentTop - 1 || topDelta < -1) {
+        isAtBottomRef.current = false;
+      }
+    } else if (isAtBottomRef.current && topDelta < -1) {
+      // 高速出数时：内容增高/顶部块卸载/浏览器锚定都会让 scrollTop 回退，
+      // 只要 scrollHeight 在变，就视为内容变化，保持粘底（由粘底滚动追回）。
+      // 仅当内容高度几乎不变、scrollTop 却下降 → 滚动条拖拽等真实上滑，才解锁。
+      if (Math.abs(heightDelta) <= threshold) {
+        isAtBottomRef.current = false;
+      }
     }
+    // 内容增高导致暂时离底：保持原粘底状态，等 useLayoutEffect 粘底滚动跟上
+
     lastScrollTopRef.current = el.scrollTop;
+    lastScrollHeightRef.current = el.scrollHeight;
   }, []);
 
-  // 新数据到达时，仅在用户处于底部时自动滚动
+  // 主动识别用户上滑意图（wheel/键盘/触摸在位置对比之前更可靠）
   useEffect(() => {
-    if (isAtBottomRef.current) {
-      terminalEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const markScrollUpIntent = () => {
+      const el = scrollContainerRef.current;
+      userScrollUpRef.current = true;
+      userScrollIntentTopRef.current = el?.scrollTop ?? 0;
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) markScrollUpIntent();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home') {
+        markScrollUpIntent();
+      }
+    };
+    let lastTouchY: number | null = null;
+    const onTouchStart = (e: TouchEvent) => {
+      lastTouchY = e.touches[0]?.clientY ?? null;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (lastTouchY == null) return;
+      const y = e.touches[0]?.clientY;
+      if (y == null) return;
+      // 手指下拉 = 内容上移（scrollTop 减小）= 用户上滑查看历史
+      if (y - lastTouchY > 8) markScrollUpIntent();
+      lastTouchY = y;
+    };
+    const onTouchEnd = () => {
+      lastTouchY = null;
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: true });
+    el.addEventListener('keydown', onKeyDown);
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: true });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('keydown', onKeyDown);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, []);
+
+  // 新数据到达：粘底时在绘制前直接拉到底（避免 useEffect 过晚导致高速流断锁）
+  useLayoutEffect(() => {
+    const el = scrollContainerRef.current;
+    if (userScrollUpRef.current && el) {
+      // 仅当相对上滑意图发生时 scrollTop 真的降了，才解除粘底；
+      // 内容增高导致的离底（scrollTop 未降）仍继续粘底。
+      if (el.scrollTop <= userScrollIntentTopRef.current - 1) {
+        isAtBottomRef.current = false;
+        lastScrollTopRef.current = el.scrollTop;
+        lastScrollHeightRef.current = el.scrollHeight;
+        return;
+      }
+      userScrollUpRef.current = false;
     }
-  }, [logs, terminalEndRef]);
+    if (isAtBottomRef.current) {
+      scrollToBottom();
+    } else if (el) {
+      lastScrollTopRef.current = el.scrollTop;
+      lastScrollHeightRef.current = el.scrollHeight;
+    }
+  }, [logs, scrollToBottom]);
 
   const handleLoadMore = useCallback(() => {
     if (!onLoadMore || isLoadingMoreRef.current) return;
